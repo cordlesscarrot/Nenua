@@ -10,8 +10,6 @@ export enum AppView {
 
 export type FocusedView = 'DASHBOARD' | 'WEATHER' | 'VISION' | 'STUDY_LAB' | 'HEALTH' | 'STUDENT_CHAT';
 
-export type AppRoute = '/dashboard' | '/chat' | '/notes' | '/camera' | '/weather' | '/wellness';
-
 export interface ChatMessage {
   role: 'user' | 'model';
   text: string;
