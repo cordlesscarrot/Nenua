@@ -1,7 +1,7 @@
 
 import React, { useRef, useState, useEffect, useImperativeHandle, forwardRef } from 'react';
 import { analyzeSmartCameraFrame } from '../services/geminiService';
-import { AnalysisResult } from '../types';
+import { AnalysisResult, DiagramPart } from '../types';
 
 interface SmartCameraProps {
   isCompact?: boolean;
@@ -15,40 +15,33 @@ export interface SmartCameraHandle {
 const SmartCamera = forwardRef<SmartCameraHandle, SmartCameraProps>(({ isCompact = false, onAnalysisDone }, ref) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
+  const [selectedPart, setSelectedPart] = useState<DiagramPart | null>(null);
 
-  // Initialize camera stream
   const startCamera = async () => {
     setError(null);
     try {
-      // Try back camera first (environment)
       let mediaStream: MediaStream;
       try {
         mediaStream = await navigator.mediaDevices.getUserMedia({ 
           video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } 
         });
       } catch (err) {
-        // Fallback to any available camera (usually user/front)
         mediaStream = await navigator.mediaDevices.getUserMedia({ 
           video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } } 
         });
       }
-      
       setStream(mediaStream);
     } catch (err: any) {
       console.error("Camera access error:", err);
-      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-        setError("Camera permission denied. Check browser settings.");
-      } else {
-        setError("Could not access camera. Ensure it isn't being used by another app.");
-      }
+      setError("Camera permission denied. Check browser settings.");
     }
   };
 
-  // Attach stream to video element whenever stream or videoRef changes
   useEffect(() => {
     if (videoRef.current && stream) {
       videoRef.current.srcObject = stream;
@@ -56,9 +49,8 @@ const SmartCamera = forwardRef<SmartCameraHandle, SmartCameraProps>(({ isCompact
         videoRef.current?.play().catch(console.error);
       };
     }
-  }, [stream, videoRef]);
+  }, [stream]);
 
-  // Start on mount
   useEffect(() => {
     startCamera();
     return () => {
@@ -74,7 +66,6 @@ const SmartCamera = forwardRef<SmartCameraHandle, SmartCameraProps>(({ isCompact
       return;
     }
     
-    // Ensure video is playing and has data
     if (videoRef.current.readyState < 2) {
       setError("Waiting for video stream...");
       return;
@@ -83,7 +74,6 @@ const SmartCamera = forwardRef<SmartCameraHandle, SmartCameraProps>(({ isCompact
     const canvas = canvasRef.current;
     const video = videoRef.current;
     
-    // Create high-res capture
     const width = video.videoWidth;
     const height = video.videoHeight;
     canvas.width = width;
@@ -97,12 +87,13 @@ const SmartCamera = forwardRef<SmartCameraHandle, SmartCameraProps>(({ isCompact
     
     setLoading(true);
     setError(null);
+    setSelectedPart(null);
     try {
       const result = await analyzeSmartCameraFrame(base64);
       setAnalysis(result);
       if (onAnalysisDone) onAnalysisDone(result);
     } catch (err: any) {
-      setError(err.message?.includes('429') ? "Quota limit reached." : "Lens analysis failed.");
+      setError("Lens analysis failed. Try closer focus.");
     } finally {
       setLoading(false);
     }
@@ -112,12 +103,80 @@ const SmartCamera = forwardRef<SmartCameraHandle, SmartCameraProps>(({ isCompact
     capture
   }));
 
+  const renderOverlay = () => {
+    if (!analysis || !analysis.parts) return null;
+
+    return (
+      <svg 
+        className="absolute inset-0 z-30 pointer-events-none" 
+        viewBox="0 0 1000 1000" 
+        preserveAspectRatio="none"
+      >
+        <defs>
+          <filter id="neonGlow" x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur stdDeviation="15" result="blur" />
+            <feComposite in="SourceGraphic" in2="blur" operator="over" />
+          </filter>
+        </defs>
+
+        {analysis.parts.map((part) => {
+          const pathD = part.points.length > 0 
+            ? `M ${part.points.map(p => `${p[0]} ${p[1]}`).join(' L ')} ${part.type === 'highlight' ? 'Z' : ''}`
+            : '';
+
+          const isFlow = part.type === 'flow_red' || part.type === 'flow_blue';
+          const color = part.type === 'flow_red' ? '#ef4444' : part.type === 'flow_blue' ? '#3b82f6' : (part.color || '#10b981');
+
+          return (
+            <g key={part.id} className="pointer-events-auto cursor-pointer" onClick={() => setSelectedPart(part)}>
+              {isFlow ? (
+                <path
+                  d={pathD}
+                  fill="none"
+                  stroke={color}
+                  strokeWidth="8"
+                  strokeLinecap="round"
+                  filter="url(#neonGlow)"
+                  className="animate-pulse"
+                >
+                  <animate 
+                    attributeName="stroke-dasharray" 
+                    from="0, 1000" 
+                    to="1000, 0" 
+                    dur="3s" 
+                    repeatCount="indefinite" 
+                  />
+                </path>
+              ) : (
+                <path
+                  d={pathD}
+                  fill={part.type === 'highlight' ? `${color}33` : 'none'}
+                  stroke={color}
+                  strokeWidth="4"
+                  filter="url(#neonGlow)"
+                  className="hover:stroke-white transition-colors"
+                />
+              )}
+              {/* Interaction points for labels */}
+              {part.points[0] && (
+                <circle 
+                  cx={part.points[0][0]} 
+                  cy={part.points[0][1]} 
+                  r="15" 
+                  fill={color} 
+                  className="animate-ping opacity-40" 
+                />
+              )}
+            </g>
+          );
+        })}
+      </svg>
+    );
+  };
+
   if (isCompact) {
     return (
-      <div className={`circular-preview relative group ${stream ? 'pulse-emerald' : ''}`}>
-        <div className="absolute inset-0 bg-emerald-500/10 z-10 pointer-events-none group-hover:bg-transparent transition-colors"></div>
-        
-        {/* Always render video if we want to attach stream to it via Ref */}
+      <div className="circular-preview relative group">
         <video 
           ref={videoRef} 
           autoPlay 
@@ -125,24 +184,25 @@ const SmartCamera = forwardRef<SmartCameraHandle, SmartCameraProps>(({ isCompact
           muted 
           className={`w-full h-full object-cover grayscale opacity-60 ${!stream ? 'hidden' : 'block'}`} 
         />
-        
         {!stream && (
           <div className="w-full h-full flex flex-col items-center justify-center text-slate-700 p-2 text-center">
              <button onClick={startCamera} className="text-[10px] font-black text-emerald-500 uppercase mb-2">Enable Lens</button>
              <svg className="w-8 h-8 opacity-20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" /></svg>
           </div>
         )}
-        <canvas ref={canvasRef} className="hidden" />
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-full gap-6">
+    <div className="flex flex-col h-full gap-6 select-none">
       <div className="flex justify-between items-center">
-        <h2 className="text-xs font-bold text-white tracking-wide uppercase opacity-80">Nenua Smart Camera</h2>
+        <div>
+          <h2 className="text-xs font-bold text-white tracking-wide uppercase opacity-80">Nenua AR Lens</h2>
+          {analysis && <span className="text-[10px] text-emerald-400 font-bold uppercase tracking-widest">Active Overlay: {analysis.diagramType}</span>}
+        </div>
         <button 
-          onClick={() => { setAnalysis(null); setError(null); startCamera(); }}
+          onClick={() => { setAnalysis(null); setError(null); setSelectedPart(null); }}
           className="text-[10px] font-bold text-slate-500 hover:text-emerald-400 uppercase tracking-widest transition-colors"
         >
           Reset View
@@ -151,77 +211,116 @@ const SmartCamera = forwardRef<SmartCameraHandle, SmartCameraProps>(({ isCompact
       
       <div className="flex-1 flex flex-col gap-8 overflow-y-auto custom-scrollbar pr-2 pb-6">
         <div className="flex flex-col items-center gap-6">
-          <div className="relative w-full aspect-video max-w-[640px] overflow-hidden rounded-2xl shadow-2xl border-4 border-emerald-500/10 bg-black">
-            <div className="absolute inset-0 z-10 border border-emerald-500/20 pointer-events-none"></div>
-            <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-emerald-500 z-20"></div>
-            <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-emerald-500 z-20"></div>
-            <div className="scan-line"></div>
+          <div ref={containerRef} className="relative w-full aspect-video max-w-[800px] overflow-hidden rounded-[2rem] shadow-[0_0_80px_rgba(0,0,0,0.8)] border-4 border-white/5 bg-black">
+            <div className="absolute inset-0 z-20 border border-emerald-500/20 pointer-events-none"></div>
             
-            <div className="absolute top-4 left-4 z-20 flex gap-2">
-               <div className={`px-2 py-1 ${stream ? 'bg-emerald-500' : 'bg-red-500'} text-[8px] font-black text-black rounded tracking-widest animate-pulse`}>
-                 {stream ? 'LIVE' : 'OFFLINE'}
+            {/* HUD Elements */}
+            <div className="absolute top-6 left-6 z-40 space-y-2 pointer-events-none">
+               <div className="flex items-center gap-2">
+                 <div className={`w-3 h-3 rounded-full ${stream ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`}></div>
+                 <span className="text-[10px] font-black text-white/50 tracking-[0.2em]">{stream ? 'SIGNAL STRENGTH: 98%' : 'OFFLINE'}</span>
                </div>
+               <div className="text-[8px] font-mono text-emerald-500/40 uppercase">LAT: 40.7128 N | LON: 74.0060 W</div>
             </div>
 
-            {error ? (
-              <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center bg-slate-900/90 z-30">
-                <svg className="w-12 h-12 text-red-500 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
-                <p className="text-xs font-bold text-red-400 mb-4">{error}</p>
-                <button onClick={startCamera} className="action-button">Retry Access</button>
-              </div>
-            ) : (
-              <video 
-                ref={videoRef} 
-                autoPlay 
-                playsInline 
-                muted 
-                className={`w-full h-full object-cover transition-opacity duration-500 ${!stream ? 'opacity-0' : 'opacity-100'}`} 
-              />
-            )}
+            <div className="absolute top-6 right-6 z-40 text-right pointer-events-none">
+               <div className="text-[10px] font-black text-white/30 tracking-widest">FRAME_BUFFER_01</div>
+               <div className="text-[8px] font-mono text-emerald-500/30">FPS: 60 | BW: 250MBPS</div>
+            </div>
+
+            {loading && <div className="scan-line z-50"></div>}
             
-            {!stream && !error && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500 space-y-4">
-                <div className="w-10 h-10 border-4 border-slate-700 rounded-full border-t-emerald-500 animate-spin"></div>
-                <span className="text-[10px] uppercase font-black tracking-widest">Initialising Neural Link...</span>
+            <video 
+              ref={videoRef} 
+              autoPlay 
+              playsInline 
+              muted 
+              className={`w-full h-full object-cover transition-opacity duration-1000 ${!stream ? 'opacity-0' : 'opacity-80 grayscale-[0.3]'}`} 
+            />
+
+            {renderOverlay()}
+
+            {selectedPart && (
+              <div 
+                className="absolute z-50 glass-card-neon p-6 max-w-[280px] animate-in slide-in-from-bottom-5 border-emerald-500/40 shadow-[0_0_30px_rgba(16,185,129,0.2)]"
+                style={{
+                   left: `${Math.min(Math.max(selectedPart.points[0][0]/10, 10), 70)}%`,
+                   top: `${Math.min(Math.max(selectedPart.points[0][1]/10, 10), 60)}%`,
+                }}
+              >
+                 <div className="flex justify-between items-start mb-3">
+                   <h4 className="text-sm font-black text-white uppercase tracking-tighter">{selectedPart.name}</h4>
+                   <button onClick={() => setSelectedPart(null)} className="text-slate-500 hover:text-white">✕</button>
+                 </div>
+                 <p className="text-xs text-slate-300 leading-relaxed italic">"{selectedPart.description}"</p>
+                 <div className="mt-4 pt-3 border-t border-white/5 flex items-center justify-between">
+                    <span className="text-[8px] font-black text-emerald-500 uppercase tracking-widest">NEURAL_TAG: {selectedPart.id}</span>
+                    <div className="w-4 h-4 rounded-full bg-emerald-500/20 flex items-center justify-center">
+                       <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping"></div>
+                    </div>
+                 </div>
+              </div>
+            )}
+
+            {error && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center bg-slate-900/95 z-[60]">
+                <p className="text-xs font-bold text-red-400 mb-4">{error}</p>
+                <button onClick={startCamera} className="action-button">Reset Sensor</button>
               </div>
             )}
 
             {loading && (
-              <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center backdrop-blur-md z-40">
-                <div className="w-12 h-12 border-4 border-emerald-400 border-t-transparent rounded-full animate-spin mb-4"></div>
-                <p className="text-[10px] font-black text-emerald-400 uppercase tracking-[0.3em]">Decoding Vision</p>
+              <div className="absolute inset-0 bg-black/40 flex flex-col items-center justify-center backdrop-blur-sm z-[70]">
+                <div className="relative">
+                   <div className="w-16 h-16 border-4 border-emerald-500/20 rounded-full"></div>
+                   <div className="absolute inset-0 w-16 h-16 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
+                </div>
+                <p className="text-[10px] font-black text-emerald-400 uppercase tracking-[0.4em] mt-6 animate-pulse">Scanning Diagram</p>
               </div>
             )}
           </div>
 
-          <button 
-            onClick={capture}
-            disabled={loading || !stream}
-            className="action-button !text-sm !py-3 !px-12 active:scale-95 disabled:opacity-50"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" /></svg>
-            Capture & Decode
-          </button>
+          <div className="flex gap-4">
+            <button 
+              onClick={capture}
+              disabled={loading || !stream}
+              className="action-button !text-sm !py-4 !px-16 active:scale-95 disabled:opacity-50 !bg-emerald-500 !text-slate-950 !font-black !border-none shadow-[0_0_20px_rgba(16,185,129,0.4)]"
+            >
+              Analyze Diagram
+            </button>
+          </div>
         </div>
 
         <canvas ref={canvasRef} className="hidden" />
 
-        {analysis && (
-          <div className="bg-white/5 border border-emerald-500/20 rounded-3xl p-6 lg:p-8 space-y-6 animate-in slide-in-from-bottom-10">
-             <div className="flex items-center gap-4 border-b border-emerald-500/10 pb-4">
-               <div className="w-10 h-10 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-400">
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-               </div>
-               <h3 className="text-xl font-black text-white uppercase tracking-tighter">{analysis.title}</h3>
+        {analysis && !loading && (
+          <div className="bg-white/5 border border-emerald-500/20 rounded-3xl p-8 space-y-6 animate-in slide-in-from-bottom-10">
+             <div className="flex items-center justify-between border-b border-emerald-500/10 pb-4">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 flex items-center justify-center text-emerald-400 text-2xl">
+                     {analysis.diagramType === 'heart' ? '❤️' : analysis.diagramType === 'cell' ? '🧫' : '🧪'}
+                  </div>
+                  <div>
+                    <h3 className="text-2xl font-black text-white uppercase tracking-tighter">{analysis.title}</h3>
+                    <p className="text-[10px] text-emerald-500 font-bold tracking-widest uppercase">Classification: {analysis.diagramType}</p>
+                  </div>
+                </div>
              </div>
-             <p className="text-slate-300 text-sm leading-relaxed italic">"{analysis.explanation}"</p>
-             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+             
+             <p className="text-slate-300 text-base leading-relaxed font-light">{analysis.explanation}</p>
+
+             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
                 {analysis.keyPoints.map((pt, i) => (
-                  <div key={i} className="bg-emerald-950/20 border border-emerald-500/10 p-4 rounded-xl flex gap-3">
-                    <span className="font-black text-emerald-500 text-xs">0{i+1}</span>
-                    <p className="text-xs text-slate-400 leading-tight">{pt}</p>
+                  <div key={i} className="bg-emerald-950/30 border border-emerald-500/10 p-5 rounded-2xl flex items-start gap-4 hover:border-emerald-500/30 transition-colors">
+                    <span className="font-black text-emerald-500 text-sm opacity-50">0{i+1}</span>
+                    <p className="text-sm text-slate-300 leading-tight">{pt}</p>
                   </div>
                 ))}
+             </div>
+             
+             <div className="p-6 bg-emerald-500/5 rounded-2xl border border-dashed border-emerald-500/20">
+                <p className="text-[10px] font-black text-emerald-400 uppercase tracking-[0.2em] mb-2">AR Instructions</p>
+                <p className="text-xs text-slate-500 font-medium">Tap any glowing highlight on the video feed to access detailed morphological data.</p>
              </div>
           </div>
         )}

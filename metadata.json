@@ -1,6 +1,6 @@
 {
   "name": "Nenua AI - Student Dashboard",
-  "description": "A comprehensive student dashboard featuring real-time weather insights with school-prep tips, a Cornell-style notes creator, and a smart camera for explaining homework and whiteboards.",
+  "description": "A comprehensive student dashboard featuring real-time weather insights with school-prep tips, a Cornell-style notes creator, and a smart camera with AR interactive overlays for diagram analysis.",
   "requestFramePermissions": [
     "camera",
     "geolocation"

@@ -37,13 +37,26 @@ export interface WeatherInfo {
   humidity: string;
   forecast: ForecastDay[];
   advisory: string;
+  proTip: string;
+  newsHeadline: string;
   sources: { title: string; uri: string }[];
+}
+
+export interface DiagramPart {
+  id: string;
+  name: string;
+  description: string;
+  points: number[][]; // Normalized 0-1000 [x, y] coordinates
+  color: string;
+  type: 'label' | 'flow_red' | 'flow_blue' | 'highlight';
 }
 
 export interface AnalysisResult {
   title: string;
   explanation: string;
   keyPoints: string[];
+  diagramType: 'heart' | 'cell' | 'molecule' | 'general';
+  parts: DiagramPart[];
 }
 
 export interface Medication {

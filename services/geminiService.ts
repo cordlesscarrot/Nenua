@@ -33,7 +33,6 @@ async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
 export const startStudentChat = (history: ChatMessage[] = []) => {
   const ai = getAIClient();
   
-  // Convert our flat ChatMessage format to Gemini's expected history format
   const geminiHistory = history.map(msg => ({
     role: msg.role === 'user' ? 'user' as const : 'model' as const,
     parts: [{ text: msg.text }]
@@ -74,15 +73,42 @@ export const getHealthAdvice = async (symptoms: string): Promise<HealthAdvice> =
 export const fetchWeatherPrep = async (location: string): Promise<WeatherInfo> => {
   return withRetry(async () => {
     const ai = getAIClient();
+    
+    // Step 1: Search grounding for real-time weather, forecast, student news, and a pro tip
     const searchResponse = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: `Weather for ${location}. Also provide a 5-word snarky roast for a student.`,
-      config: { tools: [{ googleSearch: {} }] },
+      contents: `Fetch current weather and 3-day forecast for ${location}. Also find one piece of important news for students today and a "Pro Student Tip" for productivity. Include temperature, humidity, main condition, and a snarky 5-word advisory roast for a student.`,
+      config: { 
+        tools: [{ googleSearch: {} }] 
+      },
     });
+
     const groundedText = searchResponse.text;
+    const groundingChunks = searchResponse.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+    const sources = groundingChunks
+      .map((chunk: any) => ({
+        title: chunk.web?.title || 'Source',
+        uri: chunk.web?.uri || ''
+      }))
+      .filter((s: any) => s.uri);
+
+    // Step 2: Format the grounded information into structured JSON
     const jsonResponse = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: `Format this into JSON: "${groundedText}". Structure: {location, temperature, condition, humidity, forecast: [{day, temp, condition}], advisory}`,
+      contents: `Using this report: "${groundedText}", extract weather details into JSON.
+      Required structure:
+      {
+        "location": string,
+        "temperature": string,
+        "condition": string,
+        "humidity": string,
+        "advisory": string (the roast),
+        "proTip": string (productivity tip),
+        "newsHeadline": string (important student news),
+        "forecast": [
+          {"day": string, "temp": string, "condition": string}
+        ]
+      }`,
       config: {
         responseMimeType: "application/json",
         responseSchema: {
@@ -93,16 +119,28 @@ export const fetchWeatherPrep = async (location: string): Promise<WeatherInfo> =
             condition: { type: Type.STRING },
             humidity: { type: Type.STRING },
             advisory: { type: Type.STRING },
+            proTip: { type: Type.STRING },
+            newsHeadline: { type: Type.STRING },
             forecast: { 
               type: Type.ARRAY, 
-              items: { type: Type.OBJECT, properties: { day: { type: Type.STRING }, temp: { type: Type.STRING }, condition: { type: Type.STRING } } } 
+              items: { 
+                type: Type.OBJECT, 
+                properties: { 
+                  day: { type: Type.STRING }, 
+                  temp: { type: Type.STRING }, 
+                  condition: { type: Type.STRING } 
+                },
+                required: ["day", "temp", "condition"]
+              } 
             }
           },
-          required: ["location", "temperature", "condition", "humidity", "forecast", "advisory"]
+          required: ["location", "temperature", "condition", "humidity", "advisory", "proTip", "newsHeadline", "forecast"]
         }
       }
     });
-    return { ...JSON.parse(jsonResponse.text || '{}'), sources: [] };
+
+    const weatherData = JSON.parse(jsonResponse.text || '{}');
+    return { ...weatherData, sources };
   });
 };
 
@@ -138,7 +176,25 @@ export const analyzeSmartCameraFrame = async (base64Image: string): Promise<Anal
     const imagePart = { inlineData: { mimeType: 'image/jpeg', data: base64Image.split(',')[1] } };
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: { parts: [imagePart, { text: "Explain visual. JSON: {title, explanation, keyPoints: string[]}" }] },
+      contents: { parts: [imagePart, { text: `Detect if this is a diagram (heart, cell, molecule, etc.). Return AR overlay data.
+      Coordinates are 0-1000 scale. If a heart, provide paths for blood flow (aorta, vena cava).
+      JSON Structure: 
+      {
+        "title": string,
+        "explanation": string,
+        "keyPoints": string[],
+        "diagramType": "heart" | "cell" | "molecule" | "general",
+        "parts": [
+          {
+            "id": string,
+            "name": string,
+            "description": string,
+            "points": [[x,y], [x,y]...],
+            "color": string (hex or neon name),
+            "type": "label" | "flow_red" | "flow_blue" | "highlight"
+          }
+        ]
+      }` }] },
       config: {
         responseMimeType: "application/json",
         responseSchema: {
@@ -146,9 +202,25 @@ export const analyzeSmartCameraFrame = async (base64Image: string): Promise<Anal
           properties: {
             title: { type: Type.STRING },
             explanation: { type: Type.STRING },
-            keyPoints: { type: Type.ARRAY, items: { type: Type.STRING } }
+            keyPoints: { type: Type.ARRAY, items: { type: Type.STRING } },
+            diagramType: { type: Type.STRING },
+            parts: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  id: { type: Type.STRING },
+                  name: { type: Type.STRING },
+                  description: { type: Type.STRING },
+                  points: { type: Type.ARRAY, items: { type: Type.ARRAY, items: { type: Type.NUMBER } } },
+                  color: { type: Type.STRING },
+                  type: { type: Type.STRING }
+                },
+                required: ["id", "name", "description", "points", "color", "type"]
+              }
+            }
           },
-          required: ["title", "explanation", "keyPoints"]
+          required: ["title", "explanation", "keyPoints", "diagramType", "parts"]
         }
       }
     });

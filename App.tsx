@@ -5,7 +5,8 @@ import SmartCamera, { SmartCameraHandle } from './components/SmartCamera';
 import NotesCreator from './components/NotesCreator';
 import HealthHub from './components/HealthHub';
 import StudentChat from './components/StudentChat';
-import { CornellNote, FocusedView } from './types';
+import { CornellNote, FocusedView, WeatherInfo } from './types';
+import { fetchWeatherPrep } from './services/geminiService';
 
 export default function App() {
   const [generatedNotes, setGeneratedNotes] = useState<CornellNote | null>(() => {
@@ -15,11 +16,24 @@ export default function App() {
   
   const [currentView, setCurrentView] = useState<FocusedView>('DASHBOARD');
   const [apiKeyMissing, setApiKeyMissing] = useState(false);
+  const [globalWeather, setGlobalWeather] = useState<WeatherInfo | null>(null);
   const cameraRef = useRef<SmartCameraHandle>(null);
 
   useEffect(() => {
     if (!process.env.API_KEY || process.env.API_KEY === 'undefined') {
       setApiKeyMissing(true);
+    }
+  }, []);
+
+  // Fetch initial weather/tips for global news footer
+  useEffect(() => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => fetchWeatherPrep(`${pos.coords.latitude}, ${pos.coords.longitude}`).then(setGlobalWeather).catch(console.error),
+        () => fetchWeatherPrep("London").then(setGlobalWeather).catch(console.error)
+      );
+    } else {
+      fetchWeatherPrep("London").then(setGlobalWeather).catch(console.error);
     }
   }, []);
 
@@ -76,43 +90,63 @@ export default function App() {
 
       <main className="flex-1 w-full">
         {currentView === 'DASHBOARD' ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-12 gap-8 pb-10">
-            <div className="md:col-span-1 xl:col-span-4 flex flex-col gap-8 order-2 md:order-1">
-              <div onClick={() => navigateTo('STUDENT_CHAT')} className="glass-card-neon p-6 md:p-8 cursor-pointer hover:scale-[1.01] transition-transform min-h-[300px]">
-                <div className="glow-edge"></div>
-                <StudentChat isCompact={true} />
+          <div className="flex flex-col gap-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-12 gap-8">
+              <div className="md:col-span-1 xl:col-span-4 flex flex-col gap-8 order-2 md:order-1">
+                <div onClick={() => navigateTo('STUDENT_CHAT')} className="glass-card-neon p-6 md:p-8 cursor-pointer hover:scale-[1.01] transition-transform min-h-[300px]">
+                  <div className="glow-edge"></div>
+                  <StudentChat isCompact={true} />
+                </div>
+
+                <div onClick={() => navigateTo('WEATHER')} className="glass-card-neon p-6 md:p-8 cursor-pointer hover:scale-[1.01] transition-transform">
+                  <div className="glow-edge"></div>
+                  <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">Atmospheric Intel & Time</h3>
+                  <WeatherDashboard isCompact={true} />
+                </div>
+
+                <div onClick={() => navigateTo('HEALTH')} className="glass-card-health p-6 md:p-8 cursor-pointer hover:scale-[1.01] transition-transform">
+                  <div className="glow-edge glow-edge-teal"></div>
+                  <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-4">Wellness Sync</h3>
+                  <HealthHub isCompact={true} />
+                </div>
               </div>
 
-              <div onClick={() => navigateTo('WEATHER')} className="glass-card-neon p-6 md:p-8 cursor-pointer hover:scale-[1.01] transition-transform">
-                <div className="glow-edge"></div>
-                <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">Atmospheric Intel</h3>
-                <WeatherDashboard isCompact={true} />
-              </div>
+              <div className="md:col-span-1 xl:col-span-8 flex flex-col gap-8 order-1 md:order-2">
+                <div onClick={() => navigateTo('STUDY_LAB')} className="glass-card-neon p-8 md:p-12 cursor-pointer hover:shadow-[0_0_50px_rgba(16,185,129,0.1)] transition-all min-h-[450px]">
+                  <div className="glow-edge"></div>
+                  <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-8">Synthesis Lab</h3>
+                  <NotesCreator notes={generatedNotes} onNotesGenerated={setGeneratedNotes} isCompact={true} />
+                </div>
 
-              <div onClick={() => navigateTo('HEALTH')} className="glass-card-health p-6 md:p-8 cursor-pointer hover:scale-[1.01] transition-transform">
-                <div className="glow-edge glow-edge-teal"></div>
-                <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-4">Wellness Sync</h3>
-                <HealthHub isCompact={true} />
+                <div onClick={() => navigateTo('VISION')} className="glass-card-neon p-6 md:p-8 flex flex-col sm:flex-row gap-8 cursor-pointer hover:scale-[1.01] transition-transform">
+                  <div className="glow-edge"></div>
+                  <div className="flex-1 flex flex-col justify-center">
+                    <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Vision Portal</h3>
+                    <p className="text-sm text-slate-400 font-medium leading-relaxed">Decode whiteboards or complex diagrams with AR overlays.</p>
+                  </div>
+                  <div className="w-full sm:w-48 bg-slate-900/40 rounded-3xl p-4 border border-white/5">
+                    <SmartCamera isCompact={true} />
+                  </div>
+                </div>
               </div>
             </div>
 
-            <div className="md:col-span-1 xl:col-span-8 flex flex-col gap-8 order-1 md:order-2">
-              <div onClick={() => navigateTo('STUDY_LAB')} className="glass-card-neon p-8 md:p-12 cursor-pointer hover:shadow-[0_0_50px_rgba(16,185,129,0.1)] transition-all min-h-[450px]">
-                <div className="glow-edge"></div>
-                <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-8">Synthesis Lab</h3>
-                <NotesCreator notes={generatedNotes} onNotesGenerated={setGeneratedNotes} isCompact={true} />
-              </div>
-
-              <div onClick={() => navigateTo('VISION')} className="glass-card-neon p-6 md:p-8 flex flex-col sm:flex-row gap-8 cursor-pointer hover:scale-[1.01] transition-transform">
-                <div className="glow-edge"></div>
-                <div className="flex-1 flex flex-col justify-center">
-                   <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Vision Portal</h3>
-                   <p className="text-sm text-slate-400 font-medium leading-relaxed">Decode whiteboards or complex diagrams with neural analysis.</p>
-                </div>
-                <div className="w-full sm:w-48 bg-slate-900/40 rounded-3xl p-4 border border-white/5">
-                   <SmartCamera isCompact={true} />
-                </div>
-              </div>
+            {/* Pro Student Tip & News Section */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pb-10">
+               <div className="glass-card-neon p-8 border-emerald-500/20 bg-gradient-to-br from-emerald-500/5 to-transparent relative overflow-hidden group">
+                  <div className="absolute -right-6 -bottom-6 text-7xl opacity-5 grayscale group-hover:grayscale-0 group-hover:opacity-10 transition-all">💡</div>
+                  <h4 className="text-[10px] font-black text-emerald-500 uppercase tracking-[0.3em] mb-4">Neural Pro Tip 🧠</h4>
+                  <p className="text-lg md:text-xl text-slate-200 font-bold leading-relaxed italic">
+                    {globalWeather?.proTip || "Scanning for productivity optimization strategies..."}
+                  </p>
+               </div>
+               <div className="glass-card-neon p-8 border-emerald-500/20 bg-gradient-to-br from-blue-500/5 to-transparent relative overflow-hidden group">
+                  <div className="absolute -right-6 -bottom-6 text-7xl opacity-5 grayscale group-hover:grayscale-0 group-hover:opacity-10 transition-all">📰</div>
+                  <h4 className="text-[10px] font-black text-blue-400 uppercase tracking-[0.3em] mb-4">Student Intel Briefing 📡</h4>
+                  <p className="text-lg md:text-xl text-slate-200 font-bold leading-relaxed">
+                    {globalWeather?.newsHeadline || "Decrypting latest student news cycles..."}
+                  </p>
+               </div>
             </div>
           </div>
         ) : (
